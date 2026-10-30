@@ -1,0 +1,203 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Invoice Reconciliation</title>
+
+ <link rel="stylesheet"
+    href="style.css">
+
+</head>
+
+<body>
+
+<div class="sidebar">
+    <h2>Smart Reconcile</h2>
+
+    <a href="#" class="active">Dashboard</a>
+    <a href="#upload">Upload CSV</a>
+    <a href="#invoices">Invoices</a>
+    <a href="#payments">Payments</a>
+    <a href="#matching">Smart Matching</a>
+    <a href="#reports">Reports</a>
+    <a href="#settings">Settings</a>
+</div>
+
+<div class="main">
+
+    <div class="header">
+        <div>
+            <h1>Dashboard</h1>
+            <p>Invoice & Payment Reconciliation System</p>
+        </div>
+        <button onclick="document.getElementById('upload').scrollIntoView()">
+            + Import Records
+        </button>
+    </div>
+
+    <div class="cards">
+
+        <div class="card">
+            <h3>Total Invoices</h3>
+            <h1 id="totalInvoices">120</h1>
+        </div>
+
+        <div class="card">
+            <h3>Total Payments</h3>
+            <h1>₹8,50,000</h1>
+        </div>
+
+        <div class="card">
+            <h3>Outstanding Balance</h3>
+            <h1>₹1,25,000</h1>
+        </div>
+
+        <div class="card">
+            <h3>Pending Reviews</h3>
+            <h1>08</h1>
+        </div>
+
+    </div>
+
+    <div class="section" id="upload">
+        <h2>Import CSV Files</h2>
+
+        <div class="upload-area">
+            <h3>Upload Invoice CSV</h3>
+            <input type="file" accept=".csv" id="invoiceFile">
+        </div>
+
+        <div class="upload-area">
+            <h3>Upload Payment CSV</h3>
+            <input type="file" accept=".csv" id="paymentFile">
+        </div>
+
+        <button class="action confirm" onclick="uploadFiles()">
+            Import Records
+        </button>
+        <p id="uploadMessage"></p>
+    </div>
+
+    <div class="section" id="invoices">
+        <h2>Recent Invoices</h2>
+
+        <table>
+            <tr>
+                <th>Invoice ID</th>
+                <th>Customer</th>
+                <th>Amount</th>
+                <th>Status</th>
+            </tr>
+
+            <tr>
+                <td>INV-101</td>
+                <td>Rahul Traders</td>
+                <td>₹25,000</td>
+                <td><span class="status paid">Paid</span></td>
+            </tr>
+
+            <tr>
+                <td>INV-102</td>
+                <td>Sharma Enterprises</td>
+                <td>₹40,000</td>
+                <td><span class="status pending">Pending</span></td>
+            </tr>
+
+            <tr>
+                <td>INV-103</td>
+                <td>ABC Solutions</td>
+                <td>₹15,000</td>
+                <td><span class="status review">Review</span></td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section" id="payments">
+        <h2>Payment Records</h2>
+
+        <table>
+            <tr>
+                <th>Transaction ID</th>
+                <th>Customer</th>
+                <th>Amount</th>
+                <th>Date</th>
+            </tr>
+
+            <tr>
+                <td>TXN-501</td>
+                <td>Rahul Traders</td>
+                <td>₹25,000</td>
+                <td>20-10-2026</td>
+            </tr>
+
+            <tr>
+                <td>TXN-502</td>
+                <td>Sharma Enterprises</td>
+                <td>₹20,000</td>
+                <td>22-10-2026</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section" id="matching">
+        <h2>Smart Matching Suggestions</h2>
+
+        <table>
+            <tr>
+                <th>Invoice</th>
+                <th>Payment</th>
+                <th>Confidence</th>
+                <th>Explanation</th>
+                <th>Action</th>
+            </tr>
+
+            <tr>
+                <td>INV-101</td>
+                <td>TXN-501</td>
+                <td>98%</td>
+                <td>Same customer and amount</td>
+                <td>
+                    <button class="action confirm"
+                    onclick="confirmMatch(this)">Confirm</button>
+
+                    <button class="action reject"
+                    onclick="rejectMatch(this)">Reject</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>INV-102</td>
+                <td>TXN-502</td>
+                <td>75%</td>
+                <td>Same customer, partial amount</td>
+                <td>
+                    <button class="action confirm"
+                    onclick="confirmMatch(this)">Confirm</button>
+
+                    <button class="action reject"
+                    onclick="rejectMatch(this)">Reject</button>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section" id="reports">
+        <h2>Reconciliation Reports</h2>
+        <p>Generate a report of confirmed matches and unresolved transactions.</p>
+        <button class="action confirm" onclick="window.print()">
+            Export / Print Report
+        </button>
+    </div>
+
+    <div class="section" id="settings">
+        <h2>Settings</h2>
+        <p>System Configuration and Preferences</p>
+    </div>
+
+</div>
+<script src="script.js"></script>
+
+</body>
+</html>

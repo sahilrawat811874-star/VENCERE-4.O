@@ -1,0 +1,28 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest / tests cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Database
+*.db
+*.sqlite3
+
+# Operating System Files
+Thumbs.db
+.DS_Store
+
+# Editor directories
+.vscode/
+.idea/
