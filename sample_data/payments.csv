@@ -1,0 +1,15 @@
+payment_id,customer,amount,payment_date,invoice_ref,description
+TXN-2001,Rahul Traders,25000.00,2026-10-02,INV-1001,Inv 1001 settlement
+TXN-2002,Sharma Enterprises,45000.50,2026-10-06,,Payment for services oct
+TXN-2003,Apex Tech,12500.00,2026-10-09,,NEFT TRF INV-1003 APEX
+TXN-2004,Global Logistics,30000.00,2026-10-11,INV-1004,Part payment for freight
+TXN-2005,Bright Future Retail,15000.00,2026-10-12,,Direct transfer
+TXN-2006,Sunrise Bakers,15000.00,2026-10-13,,Bank payment
+TXN-2007A,Vertex Infotech,50000.00,2026-10-14,,Transfer 1
+TXN-2007B,Vertex Infotech,50000.00,2026-10-15,,Transfer 2
+TXN-2009,Zenith Consultancy,31500.00,2026-10-20,INV-1009,Wire transfer less fees
+TXN-2010,Oasis HC,6400.00,2026-10-21,,Monthly retainer
+TXN-2099,Mystery Client Ltd,7500.00,2026-10-25,,Unidentified deposit
+TXN-ERR1,Unknown LLC,0.00,2026-10-25,,Zero amount payment
+TXN-ERR2,Broken Pay,ABCDE,2026-10-25,,Non numeric amount
+

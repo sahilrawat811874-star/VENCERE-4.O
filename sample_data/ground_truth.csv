@@ -1,0 +1,13 @@
+payment_id,expected_invoice_id,match_type,expected_status,notes
+TXN-2001,INV-1001,Exact Reference & Amount,High,Direct match with explicit invoice reference
+TXN-2002,INV-1002,Fuzzy Customer & Exact Amount,High,Customer name variation (Enterprises vs Enterprises Pvt Ltd)
+TXN-2003,INV-1003,Description Reference Extraction,High,Invoice reference extracted from payment description
+TXN-2004,INV-1004,Partial Payment,Medium,Payment amount is less than invoice total (30000 of 80000)
+TXN-2005,INV-1005,Repeated Amount Disambiguation,Medium,Same 15000 amount as INV-1006 disambiguated by customer name
+TXN-2006,INV-1006,Repeated Amount Disambiguation,Medium,Same 15000 amount as INV-1005 disambiguated by customer name
+TXN-2007A,INV-1007,Ambiguous Repeated Payment,Ambiguous,Two identical 50000 payments from same customer for one 50000 invoice
+TXN-2007B,INV-1007,Ambiguous Repeated Payment,Ambiguous,Second duplicate payment must be flagged for manual review
+TXN-2009,INV-1009,Amount Mismatch / Bank Fee,Review,Reference matches but amount is 31500 vs 32000 invoice balance
+TXN-2010,INV-1010,Customer Abbreviation,Medium,Oasis HC matches Oasis Healthcare
+TXN-2099,UNMATCHED,Unallocated Deposit,Unmatched,Deposit from client with no corresponding invoice
+

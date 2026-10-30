@@ -1,61 +1,118 @@
-
-import sqlite3
+import re
+import os
+import sys
 from decimal import Decimal
 from datetime import datetime
-
 from rapidfuzz import fuzz
 
-from database import get_connection
-
+# Ensure local imports work regardless of execution directory
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from database import (
+    get_connection,
+    get_invoice_balance,
+    get_payment_balance,
+    to_decimal
+)
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
 
-MINIMUM_SCORE = 45
-HIGH_CONFIDENCE = 85
-MEDIUM_CONFIDENCE = 65
+MINIMUM_SCORE = 40
+HIGH_CONFIDENCE = 80
+MEDIUM_CONFIDENCE = 60
+
+COMMON_SUFFIXES = [
+    r"\bpvt\s+ltd\b", r"\bprivate\s+limited\b", r"\bltd\b",
+    r"\blimited\b", r"\bllc\b", r"\bcorp\b", r"\bcorporation\b",
+    r"\binc\b", r"\benterprises\b", r"\bent\b", r"\bsolutions\b",
+    r"\bservices\b", r"\btechnologies\b", r"\btech\b", r"\bco\b",
+    r"\bcompany\b", r"\bhub\b"
+]
 
 
 # ==========================================
-# FINANCIAL HELPERS
+# STRING & CUSTOMER NORMALIZATION
 # ==========================================
 
-def to_decimal(value):
-    return Decimal(str(value)).quantize(
-        Decimal("0.01")
-    )
+def clean_string(s) -> str:
+    if not s:
+        return ""
+    # lowercase, remove punctuation except alphanumeric and spaces
+    clean = re.sub(r"[^\w\s]", " ", str(s).lower())
+    return " ".join(clean.split())
 
 
-def get_invoice_balance(invoice):
-    return (
-        to_decimal(invoice["amount"]) -
-        to_decimal(invoice["paid"])
-    )
+def strip_company_suffixes(name: str) -> str:
+    cleaned = clean_string(name)
+    for pattern in COMMON_SUFFIXES:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    return " ".join(cleaned.split())
 
-
-def get_payment_balance(payment):
-    return (
-        to_decimal(payment["amount"]) -
-        to_decimal(payment["allocated"])
-    )
-
-
-# ==========================================
-# CUSTOMER NAME MATCHING
-# ==========================================
 
 def compare_customer(invoice_name, payment_name):
+    inv_clean = clean_string(invoice_name)
+    pay_clean = clean_string(payment_name)
 
-    invoice_name = str(invoice_name).lower().strip()
-    payment_name = str(payment_name).lower().strip()
+    if not inv_clean or not pay_clean:
+        return 0
 
-    score = fuzz.token_sort_ratio(
-        invoice_name,
-        payment_name
-    )
+    if inv_clean == pay_clean:
+        return 100
 
-    return score
+    # Test full string token similarity
+    token_sort = fuzz.token_sort_ratio(inv_clean, pay_clean)
+    token_set = fuzz.token_set_ratio(inv_clean, pay_clean)
+
+    # Test stripped suffixes (e.g. "Apex Technologies" vs "Apex Tech")
+    inv_stripped = strip_company_suffixes(invoice_name)
+    pay_stripped = strip_company_suffixes(payment_name)
+    stripped_score = fuzz.token_sort_ratio(inv_stripped, pay_stripped)
+
+    # Check for abbreviation (e.g. "Oasis HC" vs "Oasis Healthcare")
+    words_inv = inv_clean.split()
+    words_pay = pay_clean.split()
+    abbr_score = 0
+    if len(words_inv) > 1 and len(words_pay) > 1:
+        abbr_inv = "".join(w[0] for w in words_inv)
+        abbr_pay = "".join(w[0] for w in words_pay)
+        if abbr_inv in pay_clean or abbr_pay in inv_clean:
+            abbr_score = 75
+
+    return max(token_sort, token_set, stripped_score, abbr_score)
+
+
+# ==========================================
+# INVOICE REFERENCE EXTRACTION
+# ==========================================
+
+def extract_reference(text: str):
+    """Searches text/description for invoice reference patterns like INV-1001, INV1001, etc."""
+    if not text:
+        return []
+    matches = re.findall(r"\b(INV[-_ ]?\d+)\b", str(text), flags=re.IGNORECASE)
+    cleaned = [re.sub(r"[-_ ]", "", m).upper() for m in matches]
+    return cleaned
+
+
+def compare_reference(invoice_id, payment_ref, payment_desc):
+    inv_norm = re.sub(r"[-_ ]", "", str(invoice_id)).upper()
+    pay_ref_norm = re.sub(r"[-_ ]", "", str(payment_ref or "")).upper()
+
+    # 1. Direct reference field match
+    if pay_ref_norm and pay_ref_norm == inv_norm:
+        return 45, "Explicit invoice reference matches exactly"
+
+    # 2. Reference in payment description
+    desc_refs = extract_reference(payment_desc)
+    if inv_norm in desc_refs:
+        return 40, f"Invoice reference '{invoice_id}' extracted from payment description"
+
+    # 3. Fuzzy check inside description
+    if inv_norm and inv_norm in re.sub(r"[-_ ]", "", str(payment_desc or "")).upper():
+        return 35, f"Invoice number embedded in transaction description"
+
+    return 0, ""
 
 
 # ==========================================
@@ -63,36 +120,40 @@ def compare_customer(invoice_name, payment_name):
 # ==========================================
 
 def compare_dates(invoice_date, payment_date):
-
     if not invoice_date or not payment_date:
         return 0, "Transaction date unavailable"
 
-    try:
+    d1 = None
+    d2 = None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        if not d1:
+            try:
+                d1 = datetime.strptime(str(invoice_date).strip(), fmt)
+            except ValueError:
+                pass
+        if not d2:
+            try:
+                d2 = datetime.strptime(str(payment_date).strip(), fmt)
+            except ValueError:
+                pass
 
-        date1 = datetime.strptime(
-            invoice_date, "%Y-%m-%d"
-        )
+    if not d1 or not d2:
+        return 0, "Invalid date format"
 
-        date2 = datetime.strptime(
-            payment_date, "%Y-%m-%d"
-        )
+    diff_days = (d2 - d1).days
 
-        difference = abs((date2 - date1).days)
-
-        if difference <= 7:
-            return 10, "Dates are within 7 days"
-
-        elif difference <= 30:
-            return 7, "Dates are within 30 days"
-
-        elif difference <= 60:
-            return 3, "Dates are within 60 days"
-
-        else:
-            return 0, "Dates are more than 60 days apart"
-
-    except ValueError:
-        return 0, "Invalid transaction date"
+    if diff_days < -2:
+        return -5, f"Warning: Payment date predates invoice by {abs(diff_days)} days"
+    elif 0 <= diff_days <= 5:
+        return 12, f"Payment occurred within {diff_days} days of invoice"
+    elif 6 <= diff_days <= 15:
+        return 9, f"Payment occurred within {diff_days} days of invoice"
+    elif 16 <= diff_days <= 30:
+        return 6, f"Payment occurred within {diff_days} days of invoice"
+    elif 31 <= diff_days <= 60:
+        return 3, f"Payment occurred within {diff_days} days of invoice"
+    else:
+        return 0, f"Payment occurred {abs(diff_days)} days apart"
 
 
 # ==========================================
@@ -100,117 +161,95 @@ def compare_dates(invoice_date, payment_date):
 # ==========================================
 
 def compare_amounts(invoice_balance, payment_balance):
+    inv_bal = to_decimal(invoice_balance)
+    pay_bal = to_decimal(payment_balance)
 
-    invoice_balance = to_decimal(invoice_balance)
-    payment_balance = to_decimal(payment_balance)
+    if inv_bal <= Decimal("0.00") or pay_bal <= Decimal("0.00"):
+        return 0, "No available balance remaining"
 
-    if invoice_balance <= 0 or payment_balance <= 0:
-        return 0, "No available balance"
+    if inv_bal == pay_bal:
+        return 28, f"Exact monetary balance match: {inv_bal}"
 
-    if invoice_balance == payment_balance:
-        return 20, "Exact outstanding amount match"
+    # Partial payment
+    if pay_bal < inv_bal:
+        return 15, f"Payment ({pay_bal}) covers partial invoice balance ({inv_bal})"
 
-    if payment_balance < invoice_balance:
-        return 12, "Payment may be a partial payment"
+    # Slight underpayment (e.g. bank fee deduction of 1-3%)
+    discrepancy = pay_bal - inv_bal
+    pct_diff = abs(discrepancy / inv_bal) * 100
+    if pay_bal < inv_bal and pct_diff <= Decimal("3.0"):
+        return 18, f"Near exact amount within {pct_diff:.1f}% (likely bank charge/fee deduction)"
 
-    return 0, "Payment exceeds invoice balance"
+    # Overpayment
+    if pay_bal > inv_bal:
+        return 0, f"Payment ({pay_bal}) exceeds invoice balance ({inv_bal})"
+
+    return 0, "Amount mismatch"
 
 
 # ==========================================
-# MAIN MATCHING ENGINE
+# INDIVIDUAL MATCH CALCULATION
 # ==========================================
 
 def calculate_match(invoice, payment):
-
     score = 0
     evidence = []
 
-    # 1. Invoice reference matching
-
-    invoice_ref = str(
-        payment["invoice_ref"] or ""
-    ).strip().lower()
-
-    invoice_id = str(
-        invoice["invoice_id"]
-    ).strip().lower()
-
-    if invoice_ref and invoice_ref == invoice_id:
-
-        score += 50
-
-        evidence.append(
-            "Invoice reference matches exactly"
-        )
-
-    # 2. Customer name matching
-
-    customer_score = compare_customer(
-        invoice["customer"],
-        payment["customer"]
+    # 1. Reference Match
+    ref_score, ref_reason = compare_reference(
+        invoice["invoice_id"],
+        payment.get("invoice_ref", ""),
+        payment.get("description", "")
     )
+    score += ref_score
+    if ref_reason:
+        evidence.append(ref_reason)
 
-    if customer_score >= 90:
+    # 2. Customer Match
+    cust_sim = compare_customer(invoice["customer"], payment["customer"])
+    if cust_sim >= 90:
+        score += 28
+        evidence.append(f"Customer name strong match ({cust_sim}%)")
+    elif cust_sim >= 75:
+        score += 20
+        evidence.append(f"Customer name good match ({cust_sim}%)")
+    elif cust_sim >= 60:
+        score += 12
+        evidence.append(f"Customer name partial match ({cust_sim}%)")
+    elif cust_sim >= 40:
+        score += 5
+        evidence.append(f"Customer name weak match ({cust_sim}%)")
 
-        score += 25
+    # 3. Amount Match
+    inv_bal = get_invoice_balance(invoice)
+    pay_bal = get_payment_balance(payment)
+    amt_score, amt_reason = compare_amounts(inv_bal, pay_bal)
+    score += amt_score
+    if amt_reason:
+        evidence.append(amt_reason)
 
-        evidence.append(
-            f"Customer names strongly match ({customer_score}%)"
-        )
-
-    elif customer_score >= 75:
-
-        score += 18
-
-        evidence.append(
-            f"Customer names partially match ({customer_score}%)"
-        )
-
-    elif customer_score >= 60:
-
-        score += 10
-
-        evidence.append(
-            f"Customer names have weak similarity ({customer_score}%)"
-        )
-
-    # 3. Amount matching
-
-    invoice_balance = get_invoice_balance(invoice)
-
-    payment_balance = get_payment_balance(payment)
-
-    amount_score, amount_reason = compare_amounts(
-        invoice_balance,
-        payment_balance
-    )
-
-    score += amount_score
-
-    evidence.append(amount_reason)
-
-    # 4. Date matching
-
+    # 4. Date Proximity
     date_score, date_reason = compare_dates(
-        invoice["invoice_date"],
-        payment["payment_date"]
+        invoice.get("invoice_date", ""),
+        payment.get("payment_date", "")
     )
-
     score += date_score
-
-    if date_score > 0:
+    if date_reason:
         evidence.append(date_reason)
 
-    # 5. Final confidence
+    # 5. Repeated Amount Safeguard
+    # If amount matches but customer similarity is very low and no reference, penalize
+    if amt_score >= 25 and cust_sim < 50 and ref_score == 0:
+        score = min(score, 45)
+        evidence.append("Caution: Repeated amount detected with dissimilar customer names and no reference")
 
-    score = min(score, 100)
+    # Cap score
+    score = max(0, min(100, score))
 
     if score >= HIGH_CONFIDENCE:
         confidence = "High"
-
     elif score >= MEDIUM_CONFIDENCE:
         confidence = "Medium"
-
     else:
         confidence = "Low"
 
@@ -226,241 +265,82 @@ def calculate_match(invoice, payment):
 # ==========================================
 
 def fetch_records():
-
     with get_connection() as conn:
-
-        invoices = conn.execute("""
-            SELECT * FROM invoices
-            ORDER BY invoice_id
-        """).fetchall()
-
-        payments = conn.execute("""
-            SELECT * FROM payments
-            ORDER BY payment_id
-        """).fetchall()
-
-        rejected = conn.execute("""
-            SELECT invoice_id, payment_id
-            FROM decisions
-            WHERE status = 'Rejected'
-        """).fetchall()
+        invoices = conn.execute("SELECT * FROM invoices ORDER BY invoice_id").fetchall()
+        payments = conn.execute("SELECT * FROM payments ORDER BY payment_id").fetchall()
+        rejected = conn.execute("SELECT invoice_id, payment_id FROM decisions WHERE status = 'Rejected'").fetchall()
 
     return (
         [dict(i) for i in invoices],
         [dict(p) for p in payments],
-        {
-            (r["invoice_id"], r["payment_id"])
-            for r in rejected
-        }
+        {(r["invoice_id"], r["payment_id"]) for r in rejected}
     )
 
 
 # ==========================================
-# GENERATE MATCH SUGGESTIONS
+# GENERATE MATCH SUGGESTIONS & AMBIGUITY
 # ==========================================
 
 def generate_suggestions():
-
     invoices, payments, rejected = fetch_records()
-
-    suggestions = []
+    candidates = []
 
     for invoice in invoices:
-
-        invoice_balance = get_invoice_balance(invoice)
-
-        if invoice_balance <= 0:
+        inv_bal = get_invoice_balance(invoice)
+        if inv_bal <= Decimal("0.00"):
             continue
 
         for payment in payments:
-
-            payment_balance = get_payment_balance(payment)
-
-            if payment_balance <= 0:
+            pay_bal = get_payment_balance(payment)
+            if pay_bal <= Decimal("0.00"):
                 continue
 
-            pair = (
-                invoice["invoice_id"],
-                payment["payment_id"]
-            )
-
-            # Skip rejected matches
-
+            pair = (invoice["invoice_id"], payment["payment_id"])
             if pair in rejected:
                 continue
 
-            result = calculate_match(
-                invoice,
-                payment
-            )
-
-            if result["score"] < MINIMUM_SCORE:
+            res = calculate_match(invoice, payment)
+            if res["score"] < MINIMUM_SCORE:
                 continue
 
-            suggestions.append({
-
+            candidates.append({
                 "invoice_id": invoice["invoice_id"],
-
                 "payment_id": payment["payment_id"],
-
-                "customer": invoice["customer"],
-
-                "invoice_amount": str(
-                    to_decimal(invoice["amount"])
-                ),
-
-                "invoice_outstanding": str(
-                    invoice_balance
-                ),
-
-                "payment_amount": str(
-                    to_decimal(payment["amount"])
-                ),
-
-                "payment_remaining": str(
-                    payment_balance
-                ),
-
-                "confidence_score": result["score"],
-
-                "confidence": result["confidence"],
-
-                "evidence": result["evidence"],
-
+                "invoice_customer": invoice["customer"],
+                "payment_customer": payment["customer"],
+                "invoice_amount": str(to_decimal(invoice["amount"])),
+                "invoice_outstanding": str(inv_bal),
+                "payment_amount": str(to_decimal(payment["amount"])),
+                "payment_remaining": str(pay_bal),
+                "suggested_allocation": str(min(inv_bal, pay_bal)),
+                "confidence_score": res["score"],
+                "confidence": res["confidence"],
+                "evidence": res["evidence"],
                 "status": "Review Required"
-
             })
 
-    # Sort by highest confidence
+    # Sort descending by confidence score
+    candidates.sort(key=lambda x: x["confidence_score"], reverse=True)
 
-    suggestions.sort(
-        key=lambda x: x["confidence_score"],
-        reverse=True
-    )
+    # Detect ambiguity (1 invoice matching multiple payments, or 1 payment matching multiple invoices)
+    inv_counts = {}
+    pay_counts = {}
+    for c in candidates:
+        if c["confidence_score"] >= MEDIUM_CONFIDENCE:
+            inv_counts[c["invoice_id"]] = inv_counts.get(c["invoice_id"], 0) + 1
+            pay_counts[c["payment_id"]] = pay_counts.get(c["payment_id"], 0) + 1
 
-    # Detect ambiguous matches
-
-    invoice_counts = {}
-    payment_counts = {}
-
-    for item in suggestions:
-
-        invoice_id = item["invoice_id"]
-        payment_id = item["payment_id"]
-
-        invoice_counts[invoice_id] = (
-            invoice_counts.get(invoice_id, 0) + 1
+    for c in candidates:
+        is_ambiguous = (
+            inv_counts.get(c["invoice_id"], 0) > 1 or
+            pay_counts.get(c["payment_id"], 0) > 1
         )
+        if is_ambiguous:
+            c["status"] = "Ambiguous - Review Required"
+            c["evidence"].append("Ambiguity: Multiple candidate pairings exist for this record.")
+        elif c["confidence"] == "High":
+            c["status"] = "Ready to Confirm"
+        else:
+            c["status"] = "Review Required"
 
-        payment_counts[payment_id] = (
-            payment_counts.get(payment_id, 0) + 1
-        )
-
-    for item in suggestions:
-
-        invoice_id = item["invoice_id"]
-        payment_id = item["payment_id"]
-
-        if (
-            invoice_counts[invoice_id] > 1
-            or payment_counts[payment_id] > 1
-        ):
-
-            item["status"] = "Ambiguous - Review Required"
-
-        elif item["confidence"] == "Low":
-
-            item["status"] = "Low Confidence - Review Required"
-
-    return suggestions
-
-
-# ==========================================
-# GET UNMATCHED INVOICES
-# ==========================================
-
-def get_unmatched_invoices():
-
-    invoices, _, _ = fetch_records()
-
-    return [
-        {
-            "invoice_id": invoice["invoice_id"],
-            "customer": invoice["customer"],
-            "outstanding": str(
-                get_invoice_balance(invoice)
-            )
-        }
-        for invoice in invoices
-        if get_invoice_balance(invoice) > 0
-    ]
-
-
-# ==========================================
-# GET UNALLOCATED PAYMENTS
-# ==========================================
-
-def get_unallocated_payments():
-
-    _, payments, _ = fetch_records()
-
-    return [
-        {
-            "payment_id": payment["payment_id"],
-            "customer": payment["customer"],
-            "remaining": str(
-                get_payment_balance(payment)
-            )
-        }
-        for payment in payments
-        if get_payment_balance(payment) > 0
-    ]
-
-
-# ==========================================
-# TEST MATCHING ENGINE
-# ==========================================
-
-if __name__ == "__main__":
-
-    print("\nSMART MATCHING ENGINE")
-
-    print("==============================")
-
-    try:
-
-        results = generate_suggestions()
-
-        if not results:
-
-            print("No matching suggestions found.")
-
-        for item in results:
-
-            print("\nInvoice:", item["invoice_id"])
-
-            print("Payment:", item["payment_id"])
-
-            print(
-                "Confidence:",
-                str(item["confidence_score"]) + "%"
-            )
-
-            print("Level:", item["confidence"])
-
-            print("Status:", item["status"])
-
-            print("Evidence:")
-
-            for reason in item["evidence"]:
-                print("-", reason)
-
-        print("\nUnmatched Invoices:")
-        print(get_unmatched_invoices())
-
-        print("\nUnallocated Payments:")
-        print(get_unallocated_payments())
-
-    except sqlite3.Error as error:
-
-        print("Database Error:", error)
+    return candidates

@@ -14,7 +14,8 @@ app = Flask(__name__)
 
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 
-DATABASE = "reconciliation.db"
+DB_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE = os.path.join(DB_DIR, "reconciliation.db")
 
 
 # ==========================================
